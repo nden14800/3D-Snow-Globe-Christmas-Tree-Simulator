@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Snow Globe Christmas Tree Simulator</title>
+    <!-- Google Fonts: Roboto -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050510;
+            font-family: 'Roboto', sans-serif;
+            color: white;
+            user-select: none;
+        }
+
+        #info-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+            z-index: 10;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+        }
+
+        h1 {
+            font-weight: 700;
+            font-size: 2rem;
+            margin: 0 0 5px 0;
+            background: linear-gradient(to right, #ff4e50, #f9d423);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        p.created-date {
+            font-weight: 300;
+            font-size: 1.0rem;
+            margin: 0;
+            color: #ccc;
+            opacity: 0.8;
+        }
+
+        #loading {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 999;
+            transition: opacity 0.5s;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Loading Screen -->
+    <div id="loading">Loading 3D Assets...</div>
+
+    <!-- UI Overlay -->
+    <div id="info-overlay">
+        <h1>Christmas Snow Globe</h1>
+        <p class="created-date">Created: 2025.12.23</p>
+    </div>
+
+    <!-- Script imports as ES Modules -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import Stats from 'three/addons/libs/stats.module.js';
+        import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+        // --- Configuration Object ---
+        const config = {
+            bgColor: '#101020',
+            
+            // Tree Settings
+            treeColor: '#0f5c28',
+            treeLevels: 5,
+            treeRadius: 1.5,
+            
+            // Ornament Settings
+            ornamentCount: 30,
+            ornamentColor1: '#ff0000',
+            ornamentColor2: '#ffd700',
+            ornamentSize: 0.15,
+            
+            // Snow Settings
+            snowCount: 800,
+            snowSpeed: 0.5,
+            snowSize: 0.08,
+            
+            // Globe Settings
+            glassOpacity: 0.3,
+            glassRoughness: 0.1,
+            autoRotate: true,
+            
+            // Light
+            ambientIntensity: 0.5,
+            lightColor: '#ffffff'
+        };
+
+        // --- Globals ---
+        let scene, camera, renderer, controls, stats, gui;
+        let treeGroup, snowSystem, snowGeo;
+        let glassDome;
+
+        // --- Init ---
+        function init() {
+            // Scene Setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(config.bgColor);
+            scene.fog = new THREE.FogExp2(config.bgColor, 0.02);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 5, 12);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            document.body.appendChild(renderer.domElement);
+
+            // Controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.maxDistance = 20;
+            controls.minDistance = 5;
+
+            // Stats (Positioned at Bottom-Left to avoid overlapping title)
+            stats = new Stats();
+            stats.dom.style.position = 'absolute';
+            stats.dom.style.top = 'auto';
+            stats.dom.style.bottom = '0px';
+            stats.dom.style.left = '0px';
+            document.body.appendChild(stats.dom);
+
+            // Lighting
+            setupLighting();
+
+            // Create Objects
+            createEnvironment(); // Base, Globe, Ground
+            createTree();
+            createSnow();
+
+            // GUI
+            setupGUI();
+
+            // Event Listeners
+            window.addEventListener('resize', onWindowResize);
+
+            // Remove Loading
+            const loading = document.getElementById('loading');
+            loading.style.opacity = '0';
+            setTimeout(() => loading.remove(), 500);
+
+            // Start Loop
+            animate();
+        }
+
+        // --- Lighting ---
+        let ambientLight, mainLight;
+        function setupLighting() {
+            ambientLight = new THREE.AmbientLight(0xffffff, config.ambientIntensity);
+            scene.add(ambientLight);
+
+            mainLight = new THREE.DirectionalLight(config.lightColor, 2);
+            mainLight.position.set(5, 10, 5);
+            mainLight.castShadow = true;
+            mainLight.shadow.mapSize.width = 1024;
+            mainLight.shadow.mapSize.height = 1024;
+            scene.add(mainLight);
+
+            // Backlight for glass effect
+            const backLight = new THREE.PointLight(0x4444ff, 1);
+            backLight.position.set(-5, 2, -5);
+            scene.add(backLight);
+        }
+
+        // --- Environment (Base, Globe) ---
+        function createEnvironment() {
+            // 1. Wooden Base
+            const baseGeo = new THREE.CylinderGeometry(4.2, 4.5, 1, 64);
+            const baseMat = new THREE.MeshStandardMaterial({ 
+                color: 0x5c3a21, 
+                roughness: 0.6,
+                metalness: 0.1
+            });
+            const base = new THREE.Mesh(baseGeo, baseMat);
+            base.position.y = -0.5;
+            base.receiveShadow = true;
+            scene.add(base);
+
+            // 2. Snow Ground inside
+            const groundGeo = new THREE.CircleGeometry(3.8, 64);
+            const groundMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
+            const ground = new THREE.Mesh(groundGeo, groundMat);
+            ground.rotation.x = -Math.PI / 2;
+            ground.position.y = 0.01;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            // 3. Glass Dome
+            // Use MeshPhysicalMaterial for transmission (glass effect)
+            const domeGeo = new THREE.SphereGeometry(4, 64, 64);
+            const domeMat = new THREE.MeshPhysicalMaterial({
+                color: 0xffffff,
+                metalness: 0,
+                roughness: config.glassRoughness,
+                transmission: 0.9, // Add transparency
+                thickness: 0.5, // Refraction
+                opacity: config.glassOpacity,
+                transparent: true,
+                envMapIntensity: 1.0,
+                ior: 1.5,
+                side: THREE.DoubleSide
+            });
+            glassDome = new THREE.Mesh(domeGeo, domeMat);
+            glassDome.position.y = 2.5; // Center of sphere roughly above base
+            glassDome.castShadow = false;
+            glassDome.receiveShadow = true; // Shadows fall on the glass
+            scene.add(glassDome);
+        }
+
+        // --- Tree Generation ---
+        function createTree() {
+            if (treeGroup) scene.remove(treeGroup);
+            treeGroup = new THREE.Group();
+
+            // Trunk
+            const trunkGeo = new THREE.CylinderGeometry(0.3, 0.5, 1.5, 12);
+            const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3c31 });
+            const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+            trunk.position.y = 0.75;
+            trunk.castShadow = true;
+            treeGroup.add(trunk);
+
+            // Leaves (Stacked Cones)
+            const leafMat = new THREE.MeshStandardMaterial({ 
+                color: config.treeColor, 
+                roughness: 0.8 
+            });
+
+            let yPos = 1.2;
+            let radius = config.treeRadius;
+
+            for (let i = 0; i < config.treeLevels; i++) {
+                const height = 1.2 - (i * 0.1);
+                const coneGeo = new THREE.ConeGeometry(radius, height, 32);
+                const cone = new THREE.Mesh(coneGeo, leafMat);
+                
+                cone.position.y = yPos + height / 2;
+                cone.castShadow = true;
+                cone.receiveShadow = true;
+                treeGroup.add(cone);
+
+                // Add Ornaments to this layer
+                addOrnaments(radius, yPos, height);
+
+                yPos += height * 0.7; // Move up overlap
+                radius *= 0.75; // Shrink radius
+            }
+
+            // Star on Top
+            const starGeo = new THREE.IcosahedronGeometry(0.25, 0);
+            const starMat = new THREE.MeshStandardMaterial({ 
+                color: 0xffea00, 
+                emissive: 0xffaa00,
+                emissiveIntensity: 0.5,
+                metalness: 0.8,
+                roughness: 0.2
+            });
+            const star = new THREE.Mesh(starGeo, starMat);
+            star.position.y = yPos + 0.2;
+            
+            // Glow for star
+            const starLight = new THREE.PointLight(0xffaa00, 1, 2);
+            starLight.position.y = yPos + 0.2;
+            treeGroup.add(starLight);
+            treeGroup.add(star);
+
+            scene.add(treeGroup);
+        }
+
+        function addOrnaments(coneRadius, coneY, coneHeight) {
+            const count = Math.floor(config.ornamentCount / config.treeLevels);
+            const ornGeo = new THREE.SphereGeometry(config.ornamentSize, 16, 16);
+            const mat1 = new THREE.MeshStandardMaterial({ color: config.ornamentColor1, metalness: 0.7, roughness: 0.2 });
+            const mat2 = new THREE.MeshStandardMaterial({ color: config.ornamentColor2, metalness: 0.7, roughness: 0.2 });
+
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const r = coneRadius * (0.8 + Math.random() * 0.2); // stick out a bit
+                const x = Math.cos(angle) * r;
+                const z = Math.sin(angle) * r;
+                // Place near bottom of the cone segment
+                const y = coneY + (Math.random() * 0.3); 
+
+                const mesh = new THREE.Mesh(ornGeo, Math.random() > 0.5 ? mat1 : mat2);
+                mesh.position.set(x, y, z);
+                mesh.castShadow = true;
+                treeGroup.add(mesh);
+            }
+        }
+
+        // --- Snow System ---
+        function createSnow() {
+            if (snowSystem) scene.remove(snowSystem);
+
+            const particles = config.snowCount;
+            const positions = new Float32Array(particles * 3);
+            const velocities = []; // Store fall speed per particle
+
+            for (let i = 0; i < particles; i++) {
+                // Random position inside the sphere
+                const r = 3.5 * Math.sqrt(Math.random());
+                const theta = Math.random() * 2 * Math.PI;
+                
+                positions[i * 3] = r * Math.cos(theta); // x
+                positions[i * 3 + 1] = Math.random() * 6; // y (0 to 6)
+                positions[i * 3 + 2] = r * Math.sin(theta); // z
+
+                velocities.push({
+                    y: (Math.random() * 0.02 + 0.01) * config.snowSpeed,
+                    x: (Math.random() - 0.5) * 0.01,
+                    z: (Math.random() - 0.5) * 0.01
+                });
+            }
+
+            snowGeo = new THREE.BufferGeometry();
+            snowGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            
+            // Custom data for animation
+            snowGeo.userData = { velocities: velocities };
+
+            // Material: Simple Points
+            const snowMat = new THREE.PointsMaterial({
+                color: 0xffffff,
+                size: config.snowSize,
+                transparent: true,
+                opacity: 0.8,
+                map: createCircleTexture(), // Soft circles
+                depthWrite: false,
+                blending: THREE.AdditiveBlending
+            });
+
+            snowSystem = new THREE.Points(snowGeo, snowMat);
+            scene.add(snowSystem);
+        }
+
+        function createCircleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(16,16,0,16,16,16);
+            grad.addColorStop(0, 'rgba(255,255,255,1)');
+            grad.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0,0,32,32);
+            const texture = new THREE.CanvasTexture(canvas);
+            return texture;
+        }
+
+        // --- GUI Setup ---
+        function setupGUI() {
+            gui = new GUI({ title: 'Simulator Settings' });
+            
+            // Folder: Tree
+            const treeFolder = gui.addFolder('Christmas Tree');
+            treeFolder.addColor(config, 'treeColor').name('Needle Color').onChange(createTree);
+            treeFolder.add(config, 'treeLevels', 3, 8, 1).name('Height Levels').onChange(createTree);
+            treeFolder.add(config, 'ornamentCount', 0, 100, 1).name('Ornaments').onChange(createTree);
+            treeFolder.addColor(config, 'ornamentColor1').name('Orn. Color 1').onChange(createTree);
+            treeFolder.addColor(config, 'ornamentColor2').name('Orn. Color 2').onChange(createTree);
+
+            // Folder: Snow
+            const snowFolder = gui.addFolder('Snow Globe');
+            snowFolder.add(config, 'snowCount', 100, 3000, 100).name('Snow Count').onFinishChange(createSnow);
+            snowFolder.add(config, 'snowSpeed', 0.1, 2.0).name('Fall Speed');
+            snowFolder.add(config, 'glassOpacity', 0.0, 1.0).name('Glass Opacity').onChange(v => glassDome.material.opacity = v);
+            snowFolder.add(config, 'glassRoughness', 0.0, 1.0).name('Glass Frost').onChange(v => glassDome.material.roughness = v);
+            
+            // Folder: Scene
+            const sceneFolder = gui.addFolder('Scene');
+            sceneFolder.add(config, 'autoRotate').name('Auto Rotate');
+            sceneFolder.addColor(config, 'bgColor').name('Background').onChange(v => {
+                scene.background.set(v);
+                scene.fog.color.set(v);
+            });
+            sceneFolder.add(config, 'ambientIntensity', 0, 2).name('Ambient Light').onChange(v => ambientLight.intensity = v);
+        }
+
+        // --- Animation Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = Date.now() * 0.001;
+
+            // Snow Animation
+            if (snowSystem) {
+                const positions = snowSystem.geometry.attributes.position.array;
+                const velocities = snowSystem.geometry.userData.velocities;
+
+                for (let i = 0; i < config.snowCount; i++) {
+                    // Update Y
+                    positions[i * 3 + 1] -= velocities[i].y * config.snowSpeed;
+                    // Wiggle X and Z
+                    positions[i * 3] += Math.sin(time + i) * 0.002;
+                    positions[i * 3 + 2] += Math.cos(time + i) * 0.002;
+
+                    // Reset if hits bottom (y=0 approx) or goes outside bounds
+                    const distSq = positions[i*3]*positions[i*3] + positions[i*3+2]*positions[i*3+2];
+
+                    if (positions[i * 3 + 1] < 0 || distSq > 15) {
+                        positions[i * 3 + 1] = 5 + Math.random(); // Reset to top
+                        positions[i * 3] = (Math.random() - 0.5) * 4;
+                        positions[i * 3 + 2] = (Math.random() - 0.5) * 4;
+                        
+                        // Keep within sphere radius approx
+                        const r = 3.5 * Math.sqrt(Math.random());
+                        const theta = Math.random() * 2 * Math.PI;
+                        positions[i * 3] = r * Math.cos(theta);
+                        positions[i * 3 + 2] = r * Math.sin(theta);
+                    }
+                }
+                snowSystem.geometry.attributes.position.needsUpdate = true;
+            }
+
+            // Auto Rotate
+            if (config.autoRotate && controls) {
+                controls.autoRotate = true;
+                controls.autoRotateSpeed = 1.0;
+                controls.update();
+            }
+
+            stats.update();
+            renderer.render(scene, camera);
+        }
+
+        // --- Resize Handler ---
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // Start App
+        init();
+    </script>
+</body>
+</html>
